@@ -1,85 +1,51 @@
-import asyncio
-import httpx
-import time
+import subprocess
 import os
-import json
+import datetime
 
-MODEL_NAME = "cyankiwi/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit"
-BASE_URL = "http://localhost:8000/v1/chat/completions"
-PROMPTS = [
-    "파이썬에서 리스트를 정렬하는 함수를 작성해줘.",
-    "파이썬 데코레이터의 사용법과 예시를 설명해줘.",
-    "C++로 빠른 푸리에 변환(FFT)을 구현해봐.",
-    "Rust에서 메모리 관리는 어떻게 이루어지는지 설명해줘.",
-    "간단한 FastAPI 애플리케이션 예제 코드를 짜줘.",
-    "Node.js 앱을 위한 Dockerfile을 작성해줘.",
-    "프로세스와 스레드의 차이점을 코드 레벨에서 설명해줘.",
-    "SQL에서 중복 데이터를 찾는 쿼리를 작성해줘.",
-    "PostgreSQL 데이터베이스 성능 최적화 방법을 알려줘.",
-    "로그인 기능을 테스트하기 위한 유닛 테스트 코드를 작성해줘."
+SCENARIOS = [
+    ("senario1.py", "LLM 추론 - 디코딩 성능 분석 (단일 요청)"),
+    ("senario2.py", "LLM 추론 - 인코딩 성능 분석 (단일 요청)"),
+    ("senario3.py", "LLM 추론 - 디코딩 성능 분석 및 10개 동시 요청 처리"),
+    ("senario4.py", "LLM 추론 - 인코딩 성능 분석 및 10개 동시 요청 처리"),
+    ("senario5.py", "LLM 추론 - 디코딩 성능 분석 및 30개 동시 요청 처리"),
+    ("senario6.py", "LLM 추론 - 인코딩 성능 분석 및 30개 동시 요청 처리"),
 ]
 
-async def wait_for_server():
-    async with httpx.AsyncClient() as client:
-        while True:
-            try:
-                response = await client.get("http://localhost:8000/v1/models")
-                if MODEL_NAME in response.text:
-                    break
-            except httpx.RequestError:
-                pass
-            print("vLLM 서버 대기 중...")
-            await asyncio.sleep(5)
+def run_scenario(file_name, description, run_timestamp):
+    output = ""
+    output += f"\n{'='*60}\n"
+    output += f"시나리오: {file_name}\n"
+    output += f"목적: {description}\n"
+    output += f"{'-'*60}\n"
+    
+    try:
+        result = subprocess.run(["python3", file_name, run_timestamp], capture_output=True, text=True, check=True)
+        output += result.stdout
+    except subprocess.CalledProcessError as e:
+        output += f"오류 발생: {e.stderr}\n"
+    output += f"{'='*60}\n"
+    return output
 
-async def fetch_and_save(client, index, prompt):
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 2048,
-        "temperature": 0,
-        "stream": False
-    }
+def main():
+    os.makedirs("./result", exist_ok=True)
+    timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+    result_filename = f"./result/{timestamp}-result.txt"
     
-    start = time.perf_counter()
-    response = await client.post(BASE_URL, json=payload, timeout=None)
-    end = time.perf_counter()
-    latency = end - start
+    os.makedirs(f"./test/{timestamp}", exist_ok=True)
     
-    data = response.json()
-    answer = data['choices'][0]['message']['content']
+    full_output = f"전체 LLM 성능 테스트를 시작합니다. (ID: {timestamp})\n"
+    print(full_output, end="")
     
-    # 파일 저장 부분 시작
-    file_path = f"answer/{index + 1:02d}.md"
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(f"# Prompt\n{prompt}\n\n# Answer\n{answer}")
-    # 파일 저장 부분 끝
+    for file_name, description in SCENARIOS:
+        scenario_output = run_scenario(file_name, description, timestamp)
+        print(scenario_output, end="")
+        full_output += scenario_output
         
-    print(f"User {index}: {latency:.4f}s")
-    return latency
-
-async def main():
-    if not os.path.exists("answer"):
-        os.makedirs("answer")
-
-    await wait_for_server()
+    with open(result_filename, "w", encoding="utf-8") as f:
+        f.write(full_output)
     
-    start_time = time.perf_counter()
-    
-    async with httpx.AsyncClient() as client:
-        tasks = [fetch_and_save(client, i, prompt) for i, prompt in enumerate(PROMPTS)]
-        latencies = await asyncio.gather(*tasks)
-
-    end_time = time.perf_counter()
-    total_duration = end_time - start_time
-    avg_latency = sum(latencies) / len(latencies)
-    throughput = len(PROMPTS) / total_duration
-
-    print("-" * 38)
-    print("L40S (48GiB) 성능 테스트 결과")
-    print(f"총 소요 시간: {total_duration:.4f}초")
-    print(f"평균 개별 응답 시간(Latency): {avg_latency:.4f}초")
-    print(f"초당 처리 요청 수(Throughput): {throughput:.4f} req/s")
-    print("-" * 38)
+    print(f"\n테스트 결과가 저장되었습니다: {result_filename}")
+    print(f"답변 파일 저장 위치: ./test/{timestamp}/")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
